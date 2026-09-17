@@ -3,7 +3,7 @@ name: canton-lens
 description: Private explorer for a Canton participant ledger (React frontend behind nginx + Fastify backend API)
 type: application
 version: 0.1.0
-appVersion: 0.0.0
+appVersion: 0.0.1
 keywords:
   - canton
   - daml
