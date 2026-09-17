@@ -1,0 +1,34 @@
+{{- include "canton-lens.validateAuthModes" . -}}
+Canton Lens is starting ({{ .Values.config.viteAuthMode }} / {{ .Values.config.ledgerAuthMode }}).
+
+{{- if .Values.frontend.enabled }}
+Frontend:  {{ include "canton-lens.frontendFullname" . }}:{{ .Values.frontend.service.port }}
+  kubectl -n {{ .Release.Namespace }} get svc {{ include "canton-lens.frontendFullname" . }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "canton-lens.frontendFullname" . }} 8080:{{ .Values.frontend.service.port }}
+  # then open http://localhost:8080/
+{{- else }}
+Frontend is disabled (API-only). Backend: {{ include "canton-lens.backendFullname" . }}:{{ .Values.backend.service.port }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "canton-lens.backendFullname" . }} 7600:{{ .Values.backend.service.port }}
+{{- end }}
+Backend health: GET {{ include "canton-lens.basePath" . }}/openapi.json (no token, no ledger access).
+
+IMPORTANT — frontend image is bound to its build-time profile:
+  VITE_AUTH_MODE={{ .Values.config.viteAuthMode }} must equal the VITE_AUTH_MODE the
+  frontend image ({{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag | default "latest" }}) was built with.
+  Rebuilding needs `docker build -f docker/frontend.Dockerfile --build-arg VITE_AUTH_MODE=...`.
+  A `helm upgrade` alone cannot change the bundle's auth profile.
+
+{{- if eq .Values.config.ledgerAuthMode "shared-identity" }}
+
+Shared Identity: every visitor shares one Canton scope. Protect this release with your
+own edge access control, TLS and rate limiting, and restart all backend pods after
+rotating the client secret / issuer / scopes.
+{{- end }}
+
+{{- if .Values.ingress.enabled }}
+Ingress is enabled; terminate TLS and enforce access control at the edge. This chart's
+nginx terminates no TLS itself.
+{{- else }}
+No Ingress was created. Put TLS, access control and rate limiting in front before
+exposing this beyond the cluster (docs/security.md deployment checklist).
+{{- end }}

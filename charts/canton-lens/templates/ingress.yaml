@@ -1,0 +1,38 @@
+{{- if .Values.ingress.enabled }}
+{{- $frontendEnabled := .Values.frontend.enabled -}}
+{{- $svcName := ternary (include "canton-lens.frontendFullname" .) (include "canton-lens.backendFullname" .) $frontendEnabled -}}
+{{- $svcPort := ternary .Values.frontend.service.port .Values.backend.service.port $frontendEnabled -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "canton-lens.fullname" . }}
+  labels:
+    {{- include "canton-lens.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    {{- toYaml .Values.ingress.tls | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ $svcName }}
+                port:
+                  number: {{ $svcPort }}
+          {{- end }}
+    {{- end }}
+{{- end }}

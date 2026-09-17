@@ -1,0 +1,18 @@
+apiVersion: v2
+name: canton-lens
+description: Private explorer for a Canton participant ledger (React frontend behind nginx + Fastify backend API)
+type: application
+version: 0.1.0
+appVersion: 0.0.0
+keywords:
+  - canton
+  - daml
+  - explorer
+  - ledger
+home: https://github.com/ekidenfi/canton-lens
+sources:
+  - https://github.com/ekidenfi/canton-lens
+maintainers:
+  - name: canton-lens operators
+annotations:
+  license: Apache-2.0

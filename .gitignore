@@ -3,6 +3,9 @@ node_modules/
 # Real values are not committed. Each runnable service has its own committed .env.example.
 .env*
 !.env.example
+# Committed build inputs: public VITE_* values baked into published images, no secrets.
+!.env.staging
+!.env.production
 # Vite build output — owned only by the frontend and not committed.
 apps/*/dist/
 # Coding-agent files (instructions, specs, settings). Local only, not part of the published repository.

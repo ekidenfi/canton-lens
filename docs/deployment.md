@@ -211,6 +211,59 @@ Two further conditions are not settled by this file:
   `browser-oidc` the user's Canton token travels through it.
 - Review the [security checklist](security.md#deployment-checklist).
 
+## Kubernetes (Helm)
+
+`charts/canton-lens` deploys the same two workloads behind one origin: a `frontend`
+Deployment (nginx serving the built bundle, proxying `<basePath>/api/*` and
+`<basePath>/openapi.json` to the backend through a templated `frontend-nginx` ConfigMap
+that mirrors `docker/nginx.conf`) and a `backend` Deployment (ClusterIP-only on port
+7600). An optional Ingress terminates TLS at the edge; nginx itself terminates no TLS.
+
+Build the images first — the chart deploys images, it does not build the bundle.
+`VITE_*` values are literals inside the frontend bundle, so the frontend image is bound
+to its auth profile and environment, and a `helm upgrade` alone cannot change the
+bundle's profile. The `Publish images and charts` workflow pushes images to GHCR
+under names derived from the repository (`ghcr.io/<owner>/<repo>-backend`,
+`ghcr.io/<owner>/<repo>-frontend`):
+`ghcr.io/ekidenfi/canton-lens-backend` (generic — no build args) and
+`ghcr.io/ekidenfi/canton-lens-frontend` with per-profile tags (`shared-identity-*`,
+`institution-bff-*`), which bake in only `VITE_AUTH_MODE`. `browser-oidc-*`
+frontend images are likewise prebuilt — from the committed `docker/.env.staging`
+on `main` pushes and `docker/.env.production` on `v*` tags. Those files carry
+only public `VITE_*` values (never a secret). A deployment with its own issuer,
+client id and redirect URIs still builds its own `browser-oidc` frontend
+(one command, from the repo root):
+
+```bash
+docker build -f docker/frontend.Dockerfile \
+  --build-arg VITE_AUTH_MODE=browser-oidc \
+  --build-arg VITE_OIDC_ISSUER=https://idp.example/realms/explorer \
+  --build-arg VITE_OIDC_CLIENT_ID=explorer-browser \
+  -t registry.example/canton-lens-frontend:browser-oidc .
+```
+
+Never pass a secret as a frontend build argument. `SHARED_IDENTITY_*` stays backend-only
+(env / Secret), read at startup.
+
+```bash
+helm install lens ./charts/canton-lens -f my-values.yaml
+# Or install the published OCI chart (versioned from the `v*` tag on releases,
+# `<Chart.yaml version>-staging.<run>` on main):
+helm install lens oci://ghcr.io/ekidenfi/canton-lens/charts/canton-lens --version 0.1.0 -f my-values.yaml
+```
+
+`charts/canton-lens/values-browser-oidc.yaml` and
+`charts/canton-lens/values-shared-identity.yaml` are copyable starting points. The chart
+fails fast on contradictory profiles (`viteAuthMode`/`ledgerAuthMode` mismatch, leftover
+`sharedIdentity.*` in `caller-bearer` mode, missing `ledgerBase`), because the backend
+would refuse to start anyway. In `shared-identity` mode prefer
+`config.sharedIdentity.existingSecret` (created via `kubectl create secret generic` or an
+external secret manager) over inline `clientSecret`, which lands in Helm release state,
+and restart all backend pods after rotating issuer, secret or scopes. With
+`frontend.enabled: false` the chart runs API-only and the Ingress routes to the backend
+service instead. See `charts/canton-lens/README.md` for the full values reference,
+`basePath` handling and the pre-exposure checklist.
+
 ## The participant's JSON API list limit
 
 A Canton participant refuses to put more than `http-list-max-elements-limit` elements (default 200) in

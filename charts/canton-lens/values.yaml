@@ -1,0 +1,164 @@
+# Default values for canton-lens.
+# A deployment never edits a tracked file to configure itself: put your values in your
+# own file (e.g. `helm install lens ./charts/canton-lens -f my-values.yaml`).
+#
+# Where a value is read decides how it is changed:
+#   VITE_* (config.viteAuthMode and friends) — baked into the frontend bundle at IMAGE
+#     BUILD time (build args in docker/frontend.Dockerfile). Changing one needs a rebuild
+#     and a new image tag, not a `helm upgrade` alone. The chart cannot inject them at
+#     deploy time; config.vite* here only DOCUMENTS what the image was built with and is
+#     checked against config.ledgerAuthMode.
+#   Everything else under config — read by the backend process at STARTUP. Changing one
+#     needs only `helm upgrade`.
+#
+# Supported authentication pairs (no automatic fallback; a mismatch fails at build or startup):
+#   viteAuthMode=browser-oidc    ledgerAuthMode=caller-bearer    per-user browser token
+#   viteAuthMode=shared-identity ledgerAuthMode=shared-identity  one backend-held service token
+#   viteAuthMode=institution-bff ledgerAuthMode=caller-bearer    institution BFF attaches the token
+
+# -- Runtime configuration shared by both workloads.
+config:
+  # -- Canton participant JSON Ledger API v2 base URL. REQUIRED, no default: naming the
+  # wrong ledger silently is worse than refusing to start.
+  ledgerBase: "https://canton.example"
+  # -- Backend startup mode: `caller-bearer` or `shared-identity`.
+  ledgerAuthMode: caller-bearer
+  # -- MUST match the VITE_AUTH_MODE the frontend image was built with
+  # (`browser-oidc`, `shared-identity` or `institution-bff`). Informational for the chart;
+  # the running bundle already carries the literal.
+  viteAuthMode: browser-oidc
+  # -- Optional API sub-path for a gateway that forwards a prefix without stripping it
+  # (e.g. `/explorer`). Leave empty for root. When set, the backend serves
+  # `<basePath>/api/*` and `<basePath>/openapi.json`, and nginx proxies the same prefix.
+  # The frontend bundle itself is still served at `/`; serving the SPA under a sub-path
+  # needs a matching frontend base and is not covered by this chart.
+  basePath: ""
+  # -- Public service entry address, used to recover from an expired caller token.
+  # The service entry, not a login route. Empty = unset.
+  publicEntryUrl: ""
+  # -- Service credential for LEDGER_AUTH_MODE=shared-identity. Backend-only: never copy
+  # these into a VITE_* variable or image build arg (build args are recorded in image
+  # history, printed in build output and kept in the build cache). Leave the whole block
+  # empty — not even empty strings — in caller-bearer mode: the backend refuses to start
+  # when any SHARED_IDENTITY_* variable is defined at all, empty included.
+  sharedIdentity:
+    # -- OIDC issuer URL (must support discovery; HTTPS except loopback/dev hosts below).
+    issuer: ""
+    # -- OAuth confidential client id.
+    clientId: ""
+    # -- Space-separated scopes (e.g. `ledger.read`). `offline_access` is refused.
+    scopes: ""
+    # -- Optional IdP-specific audience parameter.
+    audience: ""
+    # -- Development only: bare hostnames whose plaintext HTTP the backend may use
+    # (comma/space separated, e.g. `host.docker.internal`). Every host not named still
+    # requires HTTPS. Remove before any deployment beyond your own machine.
+    insecureHttpHosts: ""
+    # -- Client secret value (prefer existingSecret in real deployments). Empty = unset.
+    clientSecret: ""
+    # -- Reference to an already-created Secret instead of clientSecret above.
+    existingSecret:
+      # -- Name of the Secret holding the client secret. Empty = create/use chart secret.
+      name: ""
+      # -- Key inside that Secret.
+      key: "client-secret"
+
+# -- Frontend: nginx serving the built bundle, proxying backend-owned routes.
+# The image is built from the repo root; VITE_* values are literals inside the bundle, so
+# the image tag is bound to its auth profile. Prebuilt GHCR images exist for
+# shared-identity and institution-bff (Publish images workflow); browser-oidc is always
+# built per deployment, e.g.:
+#   docker build -f docker/frontend.Dockerfile --build-arg VITE_AUTH_MODE=browser-oidc \
+#     --build-arg VITE_OIDC_ISSUER=... --build-arg VITE_OIDC_CLIENT_ID=... -t registry/canton-lens-frontend:browser-oidc .
+frontend:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: canton-lens-frontend
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  service:
+    type: ClusterIP
+    port: 80
+  resources: {}
+    # limits:
+    #   cpu: 200m
+    #   memory: 128Mi
+    # requests:
+    #   cpu: 50m
+    #   memory: 64Mi
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 80
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  podSecurityContext: {}
+    # seccompProfile: { type: RuntimeDefault }
+  securityContext: {}
+    # allowPrivilegeEscalation: false
+    # readOnlyRootFilesystem: true
+    # runAsNonRoot: true
+    # runAsUser: 101
+    # capabilities: { drop: [ALL] }
+
+# -- Backend: Fastify JSON API (`node apps/backend/src/live/serve.mjs`). Publishes no
+# port of its own in Docker; in Kubernetes it gets a ClusterIP reachable from the
+# frontend pods (and from your BFF/gateway in API-only mode) only.
+# Prebuilt, fully generic (no build args): ghcr.io/ekidenfi/canton-lens-backend
+# (Publish images workflow). Local build:
+#   docker build -f docker/backend.Dockerfile -t registry/canton-lens-backend:0.1.0 .
+backend:
+  replicaCount: 1
+  image:
+    repository: canton-lens-backend
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  # -- Container/process port. Must match the Service targetPort.
+  port: 7600
+  service:
+    type: ClusterIP
+    port: 7600
+  resources: {}
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 80
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  podSecurityContext: {}
+  securityContext: {}
+
+serviceAccount:
+  # -- Create a ServiceAccount for the pods. Set existing name via `name`.
+  create: true
+  automount: true
+  name: ""
+  annotations: {}
+
+# -- Single-origin ingress in front of nginx (which forwards /api/* and /openapi.json
+# to the backend, honouring basePath). Terminates TLS at the edge: the chart's nginx
+# terminates no TLS itself. When `frontend.enabled=false` (API-only), the ingress
+# routes to the backend service instead — put your own entry controls in front.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: explorer.example
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+    # - secretName: explorer-tls
+    #   hosts: [explorer.example]

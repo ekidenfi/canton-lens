@@ -134,3 +134,35 @@ jobs:
         run: docker compose -f docker/compose.yaml logs --no-color
       - if: always()
         run: docker compose -f docker/compose.yaml down
+
+  # Nothing above walks charts/. The chart mirrors docker/compose.yaml (two workloads
+  # behind one origin, nginx proxying backend-owned routes), so a renamed value, a broken
+  # helper or a contradictory default can break the Kubernetes path while every job above
+  # stays green. No cluster and no live inputs: `helm template` renders locally, and the
+  # negative cases assert the fail-fast validation refuses contradictory profiles.
+  helm:
+    name: helm lint · template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm lint ./charts/canton-lens
+      - run: helm template lens ./charts/canton-lens -f charts/canton-lens/values-browser-oidc.yaml > /dev/null
+      - run: helm template lens ./charts/canton-lens -f charts/canton-lens/values-shared-identity.yaml > /dev/null
+      - name: contradictory profiles are refused
+        run: |
+          fail=0
+          refuse() {
+            if helm template lens ./charts/canton-lens "$@" > /dev/null 2>&1; then
+              echo "FAIL: helm template should have refused: $*"
+              fail=1
+            else
+              echo "ok: refused as expected: $*"
+            fi
+          }
+          refuse --set config.ledgerBase=https://canton.example \
+            --set config.viteAuthMode=shared-identity --set config.ledgerAuthMode=caller-bearer
+          refuse --set config.ledgerBase=https://canton.example \
+            --set config.sharedIdentity.issuer=https://idp.example
+          refuse --set config.ledgerBase=""
+          exit $fail
