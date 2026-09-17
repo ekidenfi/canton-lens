@@ -1,0 +1,38 @@
+# Example: one backend-held service identity (VITE_AUTH_MODE=shared-identity image).
+# Protect with operator-managed edge access control: every visitor shares one Canton scope.
+# Both images below are prebuilt by the Publish images and charts workflow; pin tags to a release
+# (e.g. shared-identity-0.1.0 / 0.1.0) in production instead of the floating tags.
+config:
+  ledgerBase: https://canton.example
+  ledgerAuthMode: shared-identity
+  viteAuthMode: shared-identity
+  basePath: ""
+  sharedIdentity:
+    issuer: https://idp.example/realms/explorer
+    clientId: explorer-service
+    scopes: ledger.read
+    audience: ""
+    insecureHttpHosts: ""
+    clientSecret: ""
+    existingSecret:
+      # kubectl create secret generic lens-shared-identity --from-literal=client-secret="$SECRET"
+      name: lens-shared-identity
+      key: client-secret
+frontend:
+  image:
+    repository: ghcr.io/ekidenfi/canton-lens-frontend
+    tag: shared-identity-latest
+backend:
+  image:
+    repository: ghcr.io/ekidenfi/canton-lens-backend
+    tag: latest
+ingress:
+  enabled: true
+  hosts:
+    - host: explorer.example
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: explorer-tls
+      hosts: [explorer.example]

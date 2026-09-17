@@ -1,0 +1,34 @@
+# Example: per-user browser login (VITE_AUTH_MODE=browser-oidc baked into the image).
+# The `browser-oidc-staging` image is prebuilt from the committed
+# `docker/.env.staging`; prod releases publish `browser-oidc-<version>` /
+# `browser-oidc-latest` from `docker/.env.production` (see the
+# `Publish images and charts` workflow). A deployment with its own issuer,
+# client id or redirect URIs still builds its own image
+# (see charts/canton-lens/README.md).
+config:
+  ledgerBase: https://canton.example
+  ledgerAuthMode: caller-bearer
+  viteAuthMode: browser-oidc
+  basePath: ""
+  publicEntryUrl: https://explorer.example/
+frontend:
+  image:
+    repository: ghcr.io/ekidenfi/canton-lens-frontend
+    tag: browser-oidc-staging
+backend:
+  image:
+    # Prebuilt by the Publish images and charts workflow; pin to a release tag in production.
+    repository: ghcr.io/ekidenfi/canton-lens-backend
+    tag: staging
+ingress:
+  enabled: true
+  className: ""
+  annotations: {}
+  hosts:
+    - host: explorer.example
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: explorer-tls
+      hosts: [explorer.example]

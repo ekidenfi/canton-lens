@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "canton-lens values",
+  "type": "object",
+  "properties": {
+    "config": {
+      "type": "object",
+      "required": ["ledgerBase", "ledgerAuthMode", "viteAuthMode"],
+      "properties": {
+        "ledgerBase": { "type": "string", "minLength": 1 },
+        "ledgerAuthMode": { "type": "string", "enum": ["caller-bearer", "shared-identity"] },
+        "viteAuthMode": {
+          "type": "string",
+          "enum": ["browser-oidc", "shared-identity", "institution-bff"]
+        },
+        "basePath": { "type": "string" },
+        "publicEntryUrl": { "type": "string" },
+        "sharedIdentity": {
+          "type": "object",
+          "properties": {
+            "issuer": { "type": "string" },
+            "clientId": { "type": "string" },
+            "scopes": { "type": "string" },
+            "audience": { "type": "string" },
+            "insecureHttpHosts": { "type": "string" },
+            "clientSecret": { "type": "string" },
+            "existingSecret": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "key": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
