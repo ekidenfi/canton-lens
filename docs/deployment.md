@@ -45,6 +45,11 @@ PUBLIC_ENTRY_URL=https://explorer.example/
 The issuer must support OIDC Discovery, PKCE, and browser CORS for the required endpoints. It
 must issue an access token with the audience and claims expected by Canton. Do not configure a
 client secret in the Frontend. Keep every `SHARED_IDENTITY_*` variable unset in this mode.
+The Backend requires HTTPS for a remote `LEDGER_BASE`; HTTP is accepted only on loopback for local
+development, or on a host named in `CALLER_BEARER_INSECURE_HTTP_HOSTS` — the allowance a Backend
+in a container needs, since it cannot reach its host through a loopback name. See
+[Shared Identity against a local stack](#shared-identity-against-a-local-stack), which applies to
+both modes.
 
 ### Shared Identity
 
@@ -181,7 +186,7 @@ refuses to start when any of them is defined at all.
 
 | Container | Holds | Port |
 |---|---|---|
-| `frontend` | nginx, the built bundle, `docker/nginx.conf`. No Node, no source | `EXPLORER_BIND`:`EXPLORER_PORT` → 80 |
+| `frontend` | nginx, the built bundle, `docker/nginx.conf.template`. No Node, no source | `EXPLORER_BIND`:`EXPLORER_PORT` → 80 |
 | `backend` | Node 24, workspace source, production dependencies. No frontend assets | unpublished; reachable from `frontend` only |
 
 The Backend image compiles nothing — Node runs the TypeScript in `apps/backend/src` and
@@ -201,7 +206,9 @@ reaches the container itself, while the address that does reach the host is not 
 `SHARED_IDENTITY_INSECURE_HTTP_HOSTS` names the hosts whose plaintext HTTP the Backend may use.
 Hosts it does not name still require HTTPS, so a value left in place cannot cover a production
 ledger, and startup prints a warning naming what was allowed. It is refused outright in
-`caller-bearer` mode, which holds no service credential.
+`caller-bearer` mode, which has a list of its own: `CALLER_BEARER_INSECURE_HTTP_HOSTS` does the
+same for the ledger address alone — that mode holds no issuer, so there is nothing to pair it
+with — and is refused in `shared-identity` mode in turn.
 
 Two further conditions are not settled by this file:
 
@@ -220,8 +227,15 @@ Two further conditions are not settled by this file:
 - Pass no secret as a build argument. A build argument is recorded in the history of the stage that
   declares it, printed in build output, and kept in the build cache.
   `SHARED_IDENTITY_CLIENT_SECRET` is read at startup instead and stays out of both images.
-- Leave `BASE_PATH` unset. `docker/nginx.conf` serves the Explorer at the root; a prefix also needs
-  matching `location` blocks in that file.
+- Leave `BASE_PATH` unset. `docker/nginx.conf.template` serves the Explorer at the root; a prefix
+  also needs matching `location` blocks in that file.
+- nginx sends a Content-Security-Policy, `X-Content-Type-Options`, `X-Frame-Options`,
+  `Referrer-Policy` and `Permissions-Policy` on every answer (`docker/security-headers.conf`). The
+  policy admits the bundle and the one inline script in `apps/frontend/index.html` by hash; after
+  editing that script, rebuild and run `node docker/inline-script-hashes.mjs
+  apps/frontend/dist/index.html`, then update the hash in the template. In `browser-oidc` the
+  policy's `connect-src` is derived from `VITE_OIDC_ISSUER` at container start; a provider that
+  serves its token endpoint from another host needs `CSP_CONNECT_SRC` in `docker/.env`.
 - nginx forwards the `Authorization` header unchanged and makes no authentication decision. In
   `browser-oidc` the user's Canton token travels through it.
 - Review the [security checklist](security.md#deployment-checklist).
@@ -306,6 +320,8 @@ memory use on those responses.
 
 - Serve `apps/frontend/dist/` from the public origin and forward `/api/*` and `/openapi.json` to
   the Backend.
+- Send the same response headers the Docker image sends (`docker/security-headers.conf` and the
+  policy in `docker/nginx.conf.template`), adjusted to the host that serves them.
 - Use HTTPS, edge access controls, and rate limiting. Keep the Backend process port on loopback
   or a protected private network where possible.
 - Keep tokens, secrets, Authorization headers, and ledger response bodies out of logs and traces.

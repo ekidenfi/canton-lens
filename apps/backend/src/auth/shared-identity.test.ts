@@ -5,7 +5,12 @@ import { type TestContext, test } from "node:test";
 import { interpretLedgerResponse } from "@canton-lens/core";
 import type { AuthorizedLedgerRequest } from "../ledger-send-with-token.ts";
 import { buildApp } from "../live/build-app.mjs";
-import { assertServiceLedgerBase, readLedgerAuthConfig } from "./config.ts";
+import {
+  assertCallerLedgerBase,
+  assertServiceLedgerBase,
+  type LedgerAuthConfig,
+  readLedgerAuthConfig,
+} from "./config.ts";
 import { serviceRequest } from "./service-request.ts";
 import { EXPIRY_MARGIN_MS, ServiceTokenProvider } from "./service-token.ts";
 
@@ -106,6 +111,7 @@ function harness(t: TestContext, basePath = "") {
 test("mode selection is explicit; required/contradictory/unknown configuration fails closed", () => {
   assert.deepEqual(readLedgerAuthConfig({ LEDGER_AUTH_MODE: "caller-bearer" }), {
     mode: "caller-bearer",
+    insecureHttpHosts: [],
   });
   for (const mode of [undefined, "", "browser-oidc", "auto"]) {
     assert.throws(() => readLedgerAuthConfig({ LEDGER_AUTH_MODE: mode }));
@@ -121,6 +127,10 @@ test("mode selection is explicit; required/contradictory/unknown configuration f
   }
   for (const key of Object.keys(env).filter((key) => key.startsWith("SHARED_IDENTITY_"))) {
     assert.throws(() => readLedgerAuthConfig({ LEDGER_AUTH_MODE: "caller-bearer", [key]: "" }));
+  }
+  // And the caller-bearer list is refused in shared-identity mode the same way, whatever it holds.
+  for (const value of ["", "host.docker.internal"]) {
+    assert.throws(() => readLedgerAuthConfig({ ...env, CALLER_BEARER_INSECURE_HTTP_HOSTS: value }));
   }
   for (const key of [
     "SHARED_IDENTITY_RESOURCE",
@@ -262,11 +272,71 @@ test("the shared credential's ledger address: HTTPS, a loopback host, or a named
   }
 });
 
+test("a caller credential's ledger address requires HTTPS except on loopback, or on a host the deployment names", () => {
+  const callerConfig = (hosts?: string) =>
+    readLedgerAuthConfig({
+      LEDGER_AUTH_MODE: "caller-bearer",
+      ...(hosts === undefined ? {} : { CALLER_BEARER_INSECURE_HTTP_HOSTS: hosts }),
+    }) as Extract<LedgerAuthConfig, { mode: "caller-bearer" }>;
+  const saysNothingOfTheValue = (base: string) => (error: Error) =>
+    !error.message.includes(base) && !error.message.includes(secret);
+
+  const nothingNamed = callerConfig();
+  assertCallerLedgerBase("https://canton.example", nothingNamed);
+  assertCallerLedgerBase("https://canton.example/api/v2", nothingNamed);
+  for (const host of ["localhost", "127.0.0.1", "[::1]"]) {
+    assertCallerLedgerBase(`http://${host}:7575`, nothingNamed);
+  }
+  for (const base of [
+    "http://canton.example",
+    "http://host.docker.internal:7575",
+    "https://canton.example?x=1",
+    "https://canton.example#x",
+    `https://${secret}@canton.example`,
+    "file:///tmp/canton",
+    "not-a-url",
+  ]) {
+    assert.throws(() => assertCallerLedgerBase(base, nothingNamed), saysNothingOfTheValue(base));
+  }
+
+  // A container cannot reach its host through a loopback name. Naming the host lifts the scheme
+  // requirement for that host alone — not for any other, and never for credentials, query or
+  // fragment.
+  const named = callerConfig("host.docker.internal");
+  assert.deepEqual(named.insecureHttpHosts, ["host.docker.internal"]);
+  assertCallerLedgerBase("http://host.docker.internal:7575", named);
+  for (const base of [
+    "http://canton.example",
+    `http://${secret}@host.docker.internal:7575`,
+    "http://host.docker.internal:7575?x=1",
+    "http://host.docker.internal:7575#x",
+  ]) {
+    assert.throws(() => assertCallerLedgerBase(base, named), saysNothingOfTheValue(base));
+  }
+
+  // The same parser as the shared-identity list: commas and spaces separate, and nothing but a bare
+  // hostname is accepted.
+  assert.deepEqual(callerConfig(" canton,  keycloak ").insecureHttpHosts, ["canton", "keycloak"]);
+  for (const value of ["*", "http://canton", "canton:7575", "canton/path", "canton_1", "[::1"]) {
+    assert.throws(() => callerConfig(value));
+  }
+});
+
 test("startup refuses invalid modes/configuration without printing configured secrets or opening a socket", () => {
   for (const extra of [
     { LEDGER_AUTH_MODE: "" },
     { LEDGER_AUTH_MODE: "auto" },
     { LEDGER_AUTH_MODE: "caller-bearer", SHARED_IDENTITY_CLIENT_SECRET: secret },
+    { LEDGER_AUTH_MODE: "caller-bearer", LEDGER_BASE: "http://remote.example" },
+    { LEDGER_AUTH_MODE: "caller-bearer", CALLER_BEARER_INSECURE_HTTP_HOSTS: "*" },
+    // Naming one host does not open a plaintext ledger on another — in either mode.
+    {
+      LEDGER_AUTH_MODE: "caller-bearer",
+      LEDGER_BASE: "http://remote.example",
+      CALLER_BEARER_INSECURE_HTTP_HOSTS: "other.example",
+    },
+    // Each list belongs to one mode.
+    { ...env, CALLER_BEARER_INSECURE_HTTP_HOSTS: "host.docker.internal" },
     { ...env, SHARED_IDENTITY_CLIENT_SECRET: "" },
     { ...env, SHARED_IDENTITY_ISSUER: `https://${secret}@bad.example/realm` },
     { ...env, LEDGER_BASE: "http://remote.example" },

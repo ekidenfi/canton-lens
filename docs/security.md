@@ -22,7 +22,15 @@ identity.
 
 The access token stays in Browser memory and is not retained by the Backend. Reloading requires
 another login. Memory-only storage does not protect against XSS; use HTTPS, a Content Security
-Policy, and avoid logging tokens.
+Policy, and avoid logging tokens. The Docker image sends one (`docker/security-headers.conf`, the
+policy in `docker/nginx.conf.template`); a deployment serving the bundle from its own host should
+send the same headers.
+
+The Backend refuses to relay a caller Bearer token to a remote participant over plaintext HTTP.
+HTTPS is required for remote ledger addresses; loopback HTTP remains available for local
+development, and `CALLER_BEARER_INSECURE_HTTP_HOSTS` names further hosts whose plaintext HTTP is
+accepted — the allowance a Backend in a container needs. Every other host still requires HTTPS,
+and startup prints a warning naming the hosts.
 
 ## Shared Identity
 
@@ -57,4 +65,5 @@ submission on that party's behalf. Prefer `CanReadAs` for view-only deployments 
 - Protect the Backend from direct public access.
 - Restrict Shared Identity deployments with operator-managed access control.
 - Grant Canton identities only the required rights.
-- Leave `SHARED_IDENTITY_INSECURE_HTTP_HOSTS` unset. It is a local development allowance.
+- Leave `SHARED_IDENTITY_INSECURE_HTTP_HOSTS` and `CALLER_BEARER_INSECURE_HTTP_HOSTS` unset. They
+  are local development allowances.

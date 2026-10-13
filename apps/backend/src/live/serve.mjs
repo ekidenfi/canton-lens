@@ -9,7 +9,11 @@
 // caller-bearer never manages user credentials. shared-identity explicitly owns one application
 // credential and an in-memory Client Credentials token provider. Neither profile logs in end users here.
 import { buildApp } from "./build-app.mjs";
-import { assertServiceLedgerBase, readLedgerAuthConfig } from "../auth/config.ts";
+import {
+  assertCallerLedgerBase,
+  assertServiceLedgerBase,
+  readLedgerAuthConfig,
+} from "../auth/config.ts";
 
 let ledgerAuth;
 try {
@@ -58,17 +62,21 @@ if (missing.length > 0 || Number.isNaN(PORT)) {
   process.exit(1);
 }
 
-// Never allow a service credential to be sent to a non-TLS remote ledger or embedded URL credentials.
-// The rule lives in ../auth/config.ts so it can be tested without opening a socket; this file owns
-// only the message and the exit. Loopback HTTP is for local Canton development, as in the committed
-// example; a container cannot use loopback to reach its host, so it names the host instead.
-if (ledgerAuth.mode === "shared-identity") {
-  try {
+// Never send either a caller or service Bearer credential to a non-TLS remote ledger or an address
+// with embedded credentials. The rules live in ../auth/config.ts so they can be tested without
+// opening a socket; this file owns only the startup message and exit. Both modes allow loopback HTTP
+// for local development and name any further plaintext host in a list of their own
+// (CALLER_BEARER_INSECURE_HTTP_HOSTS · SHARED_IDENTITY_INSECURE_HTTP_HOSTS); shared identity also
+// pairs the ledger with a plaintext issuer.
+try {
+  if (ledgerAuth.mode === "shared-identity") {
     assertServiceLedgerBase(LEDGER, ledgerAuth);
-  } catch {
-    console.error("[explorer-api] startup refused — shared-identity LEDGER_BASE requires HTTPS (loopback HTTP, or a host named in SHARED_IDENTITY_INSECURE_HTTP_HOSTS, for local development only).");
-    process.exit(1);
+  } else {
+    assertCallerLedgerBase(LEDGER, ledgerAuth);
   }
+} catch {
+  console.error(`[explorer-api] startup refused — LEDGER_BASE requires HTTPS (loopback HTTP, or a host named in ${ledgerAuth.mode === "shared-identity" ? "SHARED_IDENTITY_INSECURE_HTTP_HOSTS" : "CALLER_BEARER_INSECURE_HTTP_HOSTS"}, for local development only).`);
+  process.exit(1);
 }
 
 // ── Sending ──────────────────────────────────────────────────────────────────
@@ -130,18 +138,22 @@ if (HOST !== "127.0.0.1" && HOST !== "localhost" && HOST !== "::1") {
 }
 
 // **Said out loud, every start.** A named host is a deliberate development choice, and the cost of
-// it is that a credential opening the whole shared Canton scope travels where anything on the path
-// can read it. If the value is set but nothing needed it, say that too — a value left behind is
-// what arms the next configuration change.
-if (ledgerAuth.mode === "shared-identity" && ledgerAuth.insecureHttpHosts.length > 0) {
+// it is that a credential travels where anything on the path can read it — the shared token that
+// opens the whole configured scope in one mode, every caller's own token in the other. If the value
+// is set but nothing needed it, say that too — a value left behind is what arms the next
+// configuration change.
+const insecureHosts = ledgerAuth.insecureHttpHosts ?? [];
+if (insecureHosts.length > 0) {
+  const shared = ledgerAuth.mode === "shared-identity";
+  const key = shared ? "SHARED_IDENTITY_INSECURE_HTTP_HOSTS" : "CALLER_BEARER_INSECURE_HTTP_HOSTS";
   const plaintext = [];
   if (new URL(LEDGER).protocol === "http:") plaintext.push("LEDGER_BASE");
-  if (new URL(ledgerAuth.issuer).protocol === "http:") plaintext.push("SHARED_IDENTITY_ISSUER");
+  if (shared && new URL(ledgerAuth.issuer).protocol === "http:") plaintext.push("SHARED_IDENTITY_ISSUER");
   if (plaintext.length === 0) {
-    console.log(`[explorer-api] ⚠️  SHARED_IDENTITY_INSECURE_HTTP_HOSTS names ${ledgerAuth.insecureHttpHosts.join(", ")} but nothing used it — every service address is HTTPS. Remove the value.`);
+    console.log(`[explorer-api] ⚠️  ${key} names ${insecureHosts.join(", ")} but nothing used it — every address is HTTPS. Remove the value.`);
   } else {
-    console.log(`[explorer-api] ⚠️  plaintext service transport allowed for ${ledgerAuth.insecureHttpHosts.join(", ")} — ${plaintext.join(" and ")} ${plaintext.length > 1 ? "are" : "is"} HTTP.`);
-    console.log("               the client secret and the shared Canton token can be read by anything on that path.");
-    console.log("               development only — remove SHARED_IDENTITY_INSECURE_HTTP_HOSTS before any deployment beyond your own machine.");
+    console.log(`[explorer-api] ⚠️  plaintext transport allowed for ${insecureHosts.join(", ")} — ${plaintext.join(" and ")} ${plaintext.length > 1 ? "are" : "is"} HTTP.`);
+    console.log(`               ${shared ? "the client secret and the shared Canton token" : "every caller's Canton token"} can be read by anything on that path.`);
+    console.log(`               development only — remove ${key} before any deployment beyond your own machine.`);
   }
 }

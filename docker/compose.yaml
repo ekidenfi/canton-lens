@@ -34,6 +34,13 @@ services:
         - VITE_OIDC_POST_LOGOUT_REDIRECT_URI
         - VITE_OIDC_SCOPES
         - VITE_OIDC_AUDIENCE
+    # Read at container start by docker/csp-connect-src.envsh, which turns the issuer into the
+    # origin the Content-Security-Policy lets the page connect to. The same value the bundle was
+    # built with above; passed through only when set, so the other profiles allow `'self'` alone.
+    # CSP_CONNECT_SRC, if set in docker/.env, replaces the derived value outright.
+    environment:
+      - VITE_OIDC_ISSUER
+      - CSP_CONNECT_SRC
     # Loopback by default: this server terminates no TLS and enforces no access control, so
     # exposing it directly is a decision the operator makes explicitly in docker/.env.
     ports:
@@ -65,8 +72,10 @@ services:
       - SHARED_IDENTITY_SCOPES
       - SHARED_IDENTITY_AUDIENCE
       # Development only. A container cannot reach its host through a loopback name, so a local
-      # HTTP participant or IdP has to be named here to be reachable at all. See docker/.env.example.
+      # HTTP participant or IdP has to be named here to be reachable at all — one list per mode. See
+      # docker/.env.example.
       - SHARED_IDENTITY_INSECURE_HTTP_HOSTS
+      - CALLER_BEARER_INSECURE_HTTP_HOSTS
     # No `ports`. The Backend is reachable from the frontend container and from nowhere else.
     # An API-only deployment publishes it deliberately and puts its own entry controls in front.
     restart: unless-stopped
